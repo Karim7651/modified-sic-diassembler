@@ -5,12 +5,15 @@ public class HTE {
     public String location;
     public String startingAddress;
     public String endingAddress;
+    public String currentT;
+    public int currentTRow;
+    public int currentTIndex;
 
     //relative path starts at packages not current file
-    public String File = "src\\input.txt";
-    public String outputFile = "src\\output.txt";
+    public String File = "src\\input3.txt";
+    public String outputFile = "src\\output3.txt";
 
-    public String symbolTableFile="src\\symbolTable.txt";
+    public String symbolTableFile="src\\symbolTable3.txt";
     public ArrayList<ArrayList<String>> codeFirstPart = new ArrayList<>();
 
 
@@ -32,17 +35,16 @@ public class HTE {
         initializeMaps();
         processHRecord(inputFile.get(0));
         processTRecords();
-        removeExcess();
         sortSecondPart();
+        processERecord();
         calculateReferencesOfVariables();
         generateSymbolTable();
-        processERecord();
         writeToFile();
         writeSymbolTable();
     }
 
     public void generateSymbolTable() {
-        for (int i = 0; i < codeSecondPart.size(); i++) {
+        for (int i = 0; i < codeSecondPart.size()-1; i++) {
             ArrayList<String> list = codeSecondPart.get(i);
             String symbol = list.get(1);
             String location = list.get(0);
@@ -52,55 +54,62 @@ public class HTE {
     }
 
     public void calculateReferencesOfVariables() {
+
         //RESW RESB
         for (int i = 0; i < codeSecondPart.size(); i++) {
             ArrayList<String> current = codeSecondPart.get(i);
-            for (int j = 0; j < current.size(); j++) {
                 if (current.get(2).equals("resw") || current.get(2).equals("RESW")) {
                     String value = subtractTwoHexadecimalAndDivideBy3(codeSecondPart.get(i + 1).get(0), current.get(0));
                     current.set(3, String.valueOf(Integer.parseInt(value, 16)));
                 } else if (current.get(2).equals("resb") || current.get(2).equals("RESB")) {
                     String value = subtractTwoHexadecimal(codeSecondPart.get(i + 1).get(0), current.get(0));
                     current.set(3, String.valueOf(Integer.parseInt(value, 16)));
+                    //word  byte
+                    //we left at T = 0150(currentTRow) at index = currentTIndex
+                } else if (current.get(2).equals("word") || current.get(2).equals("WORD")) {
+                    String currentTToParse = inputFile.get(currentTRow);
+                    int j = currentTIndex;
+                    String objectCode = currentTToParse.substring(j,j+6);
+                    String value = cutFirstTwoCharacters(objectCode);
+                    value = String.valueOf(Integer.parseInt(value, 16));
+                    current.set(3,value);
+                    current.set(4,objectCode);
+                    currentT = addTwoHexadecimal(currentT,"3" );
+                    j+=6;
+                    currentTIndex+=6;
+                    if (j >= inputFile.get(currentTRow).length()-1 ){
+                        currentTRow++;
+                        currentTIndex=9;
+                    }
+                    //how know how many bits we're going to take get (nextLocation-thisLocation) -> decimal * 2
+                } else if (current.get(2).equals("byte") || current.get(2).equals("Byte")) {
+                    String nextLocation = codeSecondPart.get(i+1).get(0);
+                    String difference = subtractTwoHexadecimal(nextLocation,current.get(0));
+                    int differenceInDecimal = hexadecimalToDecimal(difference)*2;
+                    int j = currentTIndex;
+                    StringBuilder stringBuilder  =new StringBuilder();
+                    stringBuilder.append(inputFile.get(currentTRow).substring(j,j+differenceInDecimal));
+                    current.set(4,stringBuilder.toString());
+                    StringBuilder stringBuilder1 = new StringBuilder();
+                    stringBuilder1.append("X\"");
+                    stringBuilder1.append(stringBuilder);
+                    stringBuilder1.append("\"");
+                    current.set(3,stringBuilder1.toString());
+                    j+=differenceInDecimal;
+                    currentTIndex+=differenceInDecimal;
+                    if (j >= inputFile.get(currentTRow).length()-1 ){
+                       currentTRow++;
+                       currentTIndex=9;}
+
                 }
-            }
         }
-        //word byte, set object code too
-        String current = inputFile.get(3);
-        ArrayList<String> list = new ArrayList<>();
-        int counter = 0;
-        for (int i = 9; i < current.length(); i += 6) {
-            list.add(current.substring(i, i + 6));
-        }
-        for (int i = 0; i < codeSecondPart.size(); i++) {
-            ArrayList<String> current1 = codeSecondPart.get(i);
-            if (current1.get(2).equals("word") || current1.get(2).equals("WORD")) {
-                //object code
-                String value = list.get(counter);
-                current1.set(4, value);
-                //object code from hex to decimal string
-                value = String.valueOf(Integer.parseInt(value, 16));
 
-                current1.set(3, value);
-                counter++;
-            }
-
-        }
     }
+
+
 
     public void sortSecondPart() {
         Collections.sort(codeSecondPart, Comparator.comparingInt(list -> hexadecimalToDecimal(list.get(0))));
-    }
-
-    public void removeExcess() {
-        //remove excess instructions
-        int size1 = codeFirstPart.size();
-        int size2 = codeSecondPart.size();
-        for (int i = 1; i < 5; i++) {
-            codeFirstPart.remove(size1 - i);
-            codeSecondPart.remove(size2 - i);
-
-        }
     }
 
     public void readFromFile() {
@@ -144,9 +153,19 @@ public class HTE {
 
     public void processTRecords() {
         boolean isFormatOne = false;
+        outerloop:
         for (int i = 1; i < inputFile.size() - 1; i++) {
             String current = inputFile.get(i);
+            currentT = current.substring(1, 7);
+            currentT = cutFirstTwoCharacters(currentT); // current t
+            currentTRow=i;
+
             for (int j = 9; j < current.length(); ) {
+                //if we started initializing word/byte
+                if(declaredVariablesMap.containsKey(currentT)){
+                    currentTIndex = j;
+                    break outerloop;
+                }
 
                 ArrayList<String> list = new ArrayList<>();
                 prepList(list);
@@ -170,6 +189,7 @@ public class HTE {
                     //no reference here
                     list.set(4, OPCode);
                     codeFirstPart.add(list);
+                    currentT = addTwoHexadecimal(currentT,"1");
 
                 } else {
                     //format 3/4 here
@@ -210,7 +230,7 @@ public class HTE {
                         list.set(3, ref + ",X");
                         list.set(4, objectCode);
                         codeFirstPart.add(list);
-                        declaredVariablesMap.put(address, ref);
+                        declaredVariablesMap.put(variableAddress, ref);
                         jumpAddresses.add(address);
                         // declare for resw / resb / word / byte in codeSecondPart ArrayList
                         if (!codeSecondPartMap.containsKey(address)) {
@@ -242,6 +262,7 @@ public class HTE {
                         if (!codeSecondPartMap.containsKey(address)) {
                             ArrayList<String> list2 = new ArrayList<>();
                             String type = instructionVariableTypeMap.get(OPCode);
+
                             prepList(list2);
                             list2.set(0, address);
                             list2.set(1, ref);
@@ -257,6 +278,10 @@ public class HTE {
                     j += 2;
                 } else {
                     j += 6;
+                }
+                currentT = addTwoHexadecimal(currentT,"0003");
+                if(isFormatOne){
+                    currentT = subtractTwoHexadecimal(currentT,"0003");
                 }
             }
         }
@@ -643,4 +668,5 @@ public class HTE {
             e.printStackTrace();
         }
     }
+
 }
